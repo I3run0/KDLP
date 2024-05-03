@@ -3,36 +3,57 @@
 #include <string.h>
 #include <stdlib.h>
 #include <ctype.h>
+#include <sys/stat.h>
+#include <fcntl.h>
 #include <sys/wait.h>
 
-#define MAXARGS 10
+#define MAXARGS 20
+#define MAXLEN 256
 
-int split_args(const char *line, char **args) {
-	if (line == NULL || args == NULL) {
+char ** alloc_argvs() {
+	char **argvs;
+	
+	argvs = (char **)malloc(MAXARGS * sizeof(char *));
+	for(int i = 0; i < MAXARGS; i++) {
+		argvs[i] = (char *)malloc(MAXLEN * sizeof(char));
+	}
+
+	return argvs;
+}
+
+void free_argvs(char **argvs) {
+	for(int i = 0; i < MAXARGS; i++) {
+		free(argvs[i]);
+	}
+
+	free(argvs);
+}
+
+int split_args(const char *line, char **argvs, char *delimiters) {
+	if (line == NULL || argvs == NULL) {
 		return -1;
 	}
-    int arg_count = 0;
-    const char *delimiters = " \t\n"; 
+    	int argc = 0;
+    	//const char *delimiters = delimiters; 
 
-    char *token = strtok((char *)line, delimiters);
-    while (token != NULL && arg_count < MAXARGS) {
-		if (*token != '\0') {
-        	args[arg_count] = strdup(token); 
-			arg_count++;
+    	char *token = strtok((char *)line, delimiters);
+    	while (token != NULL && argc < MAXARGS - 1) {
+        	strcpy(argvs[argc], strdup(token)); 
+		argc++;
         	token = strtok(NULL, delimiters);
-		}
-    }
-
-    return arg_count;
+    	}
+	
+	argvs[argc] = NULL; // Ensure that the argsv is NULL terminated
+	return argc;
 }
 
 typedef struct {
 	char *name;
 	int name_len;
-	int (*execute)(int argc, char *argvs[]);
+	int (*execute)(int argc, char **argvs);
 } Command;
 
-int cd_command(int argc, char *argvs[]) {
+int cd_command(int argc, char **argvs) {
     if (2 < argc) {
 		printf("Usage message\n");
 		return -1;
@@ -40,7 +61,7 @@ int cd_command(int argc, char *argvs[]) {
 	return chdir(argvs[1]);
 }
 
-int exit_command(int argc, char *argvs[]) {
+int exit_command(int argc, char **argvs) {
     if (1 < argc) {
 		printf("Exit dons't have ags:");
 		for(int i = 1; i < argc; i++)
@@ -50,24 +71,65 @@ int exit_command(int argc, char *argvs[]) {
 	exit(1);
 } 
 
-int fork_exec_command(int argc, char *argvs[]) {
+int fork_exec_command(int argc, char **argvs) {
 	int pid, endId, status;
-	if(pid = fork() == -1) {
+	if((pid = fork()) == -1) {
 		printf("Fork error\n");
 	} else if (pid == 0) {
-		execv(argvs[0] + 1, argvs)
+		if (execv(argvs[0], (char * const*) argvs) == -1) {
+			printf("Execv error\n");
+			exit(1);
+		}
 	} else {
 		while ((endId = waitpid(pid, &status, WNOHANG|WUNTRACED)) == 0);
+		exit(1);
 	}
-	
+
+	return 0;
 }
 
-int execute_command(int argc, char *argvs[]) {
-    Command command_table[] = {
-        {"cd", strlen("cd"), cd_command},
-        {"exit", strlen("exit"), exit_command},
-		{"./", strlen("./"), fork_exec_command},
-    };
+int env_exec_command(int argc, char**argvs) {
+	char *env;
+	char path_to_search[2 * MAXLEN];
+	char **paths = alloc_argvs();
+	int pathsc;
+	struct stat sb;
+
+	env = getenv("PATH");
+	pathsc = split_args(env, paths, ":\n");
+	if (pathsc < 1) return 1;
+	
+	for (int i = 0; i < pathsc; i++) {
+		/* Construct the path to search */
+		strcpy(path_to_search, paths[i]);
+		strcat(path_to_search, "/");
+		strcat(path_to_search, argvs[0]);
+		
+		/* If find the binary execute them */
+		if (stat(path_to_search, &sb) != -1) {
+			if (strlen(path_to_search) < MAXLEN - 2) {
+				strcpy(argvs[0], path_to_search);
+				return fork_exec_command(argc, argvs);
+			} else {
+				printf("Path to long to execute");
+				break;
+			}		
+		} 
+		
+	}
+
+	return 1;
+}
+
+int execute_command(int argc, char **argvs) {
+	if(env_exec_command(argc, argvs))
+		return -1;
+	
+	Command command_table[] = {
+        	{"cd", strlen("cd"), cd_command},
+        	{"exit", strlen("exit"), exit_command},
+		{"./", strlen("/"), fork_exec_command}
+    	};
 
     char *cmd_name = argvs[0];
     int cmd_table_size = sizeof(command_table) / sizeof(command_table[0]);
@@ -85,19 +147,19 @@ int execute_command(int argc, char *argvs[]) {
 }
 
 int main() {
-	char buffer[200];
-	char *prompt;
+	char buffer[1000];
+	char *prompt = NULL;
 	size_t prompt_len;
-	int rt, args_c;
-	char *argvs[MAXARGS];
+	int rt, argc;
+	char **argvs = alloc_argvs();
 	do{
 		getcwd(buffer, 200);
 		printf("%s$ ", buffer);
 		rt = getline(&prompt, &prompt_len, stdin);
-		args_c = split_args(prompt, argvs); 
-		execute_command(args_c, argvs);
-			//printf("Unrecongnized command: %s\n", argvs[0] != NULL ? argvs[0] : "");
-		//}
+		argc = split_args(prompt, argvs, " \t\n"); 
+		if(argc != 0 && execute_command(argc, argvs)) {
+			printf("Unrecongnized command: %s\n", argvs[0]);
+		}
 	} while (rt != -1);
 	return 0;	
 }
