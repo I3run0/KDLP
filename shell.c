@@ -43,8 +43,26 @@ int split_args(const char *line, char **argvs, char *delimiters) {
         	token = strtok(NULL, delimiters);
     	}
 	
-	argvs[argc] = NULL; // Ensure that the argsv is NULL terminated
+	argvs[argc + 1] = NULL; // Ensure that the argsv is NULL terminated
 	return argc;
+}
+
+void replace_to_home(int argc, char **argvs) {
+	char *env, *token, arg[MAXLEN];
+       
+	env = getenv("HOME");	
+	int i, j;
+	for (i = 0; i < argc; i++) {
+		token = strtok(argvs[i], "/\n");
+		if (token != NULL && (strncmp(token, "~", 1) == 0)) {
+			strcpy(arg, env);
+			strcat(arg, "/");
+			strcat(arg,e);
+			strcpy(argvs[i], arg);
+		}
+		printf("%s\n", argvs[i]);
+		
+	}
 }
 
 typedef struct {
@@ -156,10 +174,12 @@ int main() {
 		getcwd(buffer, 200);
 		printf("%s$ ", buffer);
 		rt = getline(&prompt, &prompt_len, stdin);
-		argc = split_args(prompt, argvs, " \t\n"); 
+		argc = split_args(prompt, argvs, " \t\n");
+	       	replace_to_home(argc, argvs);
+		/*
 		if(argc != 0 && execute_command(argc, argvs)) {
 			printf("Unrecongnized command: %s\n", argvs[0]);
-		}
+		}*/
 	} while (rt != -1);
 	return 0;	
 }
